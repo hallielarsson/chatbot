@@ -2,7 +2,7 @@ import subprocess
 import json
 import re
 from typing import Dict, Any, Optional
-
+debug = True
 # Define type for the expected world state structure
 class WorldState:
     def __init__(self, accuracy: float, new_value: str, additional_text: Optional[str] = None):
@@ -26,51 +26,22 @@ class AIImplementation:
 
         system = (
             '''You are a predictive AI. Given the previous state (above) and the chat history (below) 
-            return a JSON object that satisfies the type WorldStateResponse
-
-            ```typescript def
-            type WorldStateDetails = {
-                accuracy: number;           // Accuracy of the previous state, ranging from 0 to 1
-                newValue: string;           // The new value for this state
-                additionalText?: string;    // Any additional text for the user
-            };
-
-            type WorldStateResponse = {
-                CurrentState: WorldStateDetails; //as clear a picture of the current state of the world as you can manage
-                AbsoluteIdealWorld: WorldStateDetails; //The best world state you can imagine
-                IncrementallyBetterWorld: WorldStateDetails; //A concrete, small and attainable better world based on acheivable action 
-                AbsoluteAnxietyWorld: WorldStateDetails; //A worst case scenario version of the world if everytthing you are afraid of goes wrong
-                IncrementallyWorseWorld: WorldStateDetails; //A world where CurrentState takes a small, worrying step towards AbsoluteAnxietyWorld
-                TinyNextStep: string;      // Suggested next step for the user, seeking IncrementallyBetterWorld and avoiding IncrementallyWorseWorld accouding to their individual weights
-                ClarifyingQuestion: string; // Specific question to clarify the accuracy of the world states
-                OutputText: string // The message being displayed to the user directly
-                OutputFile?: { path: string, content: string } //OPTIONAL content to write to a file if requested
-            };
-
+            return a JSON object that satisfies the format, replacing any text in <brackets>
             ```
-
             Please double check to make sure that the format you're outputting fulfills the type WorldStateResponse definiton and that you're actively fillingout each parameter within each world state details.
 
             example response:
             ```json
             {
-              "CurrentState": {"accuracy": 0.8, "newValue": "placeholder", "additionalText": "placeholder"},
-              "AbsoluteIdealWorld": {"accuracy": 0.9, "newValue": "ideal_state", "additionalText": "placeholder"},
-              "IncrementallyBetterWorld": {"accuracy": 0.7, "newValue": "better_state", "additionalText": "placeholder"},
-              "AbsoluteAnxietyWorld": {"accuracy": 0.5, "newValue": "anxiety_state", "additionalText": "placeholder"},
-              "IncrementallyWorseWorld": {"accuracy": 0.6, "newValue": "worse_state", "additionalText": "placeholder"},
-              "TinyNextStep": "placeholder",
-              "ClarifyingQuestion": "placeholder",
-              "OutputText": "placeholder",
-              "OutputFile" : {
-                "path" : "placeholder",
-                "content" : "placeholder",
-                "filetype": "placeholder"
-              }
+              "CurrentState": {"accuracy": 0.8, "newValue": "<the current world state>" },
+              "AbsoluteIdealWorld": {"accuracy": 0.9, "newValue": "<fill in with what you think the better world would be>"},
+              "IncrementallyBetterWorld": {"accuracy": 0.7, "newValue": "<a world on the way from current to better.>"},
+              "AbsoluteAnxietyWorld": {"accuracy": 0.5, "newValue": "anxiety_state", "additionalText": "<the worst version of the current world>"},
+              "IncrementallyWorseWorld": {"accuracy": 0.6, "newValue": "worse_state", "additionalText": "<a step from the current world towards the absolute anxious world>"},
+              "TinyNextStep": "<fill in with a tiny next step towards the incrementally better world>",
+              "KnowledgeGap": "<an area you need more info on to confirm the accuracy of the world state>",
             }
             ```
-            Please make very sure that TinyNextStep, ClarifyingQuestion, and OutputText are all filled out based on moving away from the incrementally bad world state and towards the incrementally good.
-            please generate novel, creative values for any value that is placeholder in the example.
             Please do not output the entire chat history, only this data structure.
 
             '''
@@ -118,8 +89,7 @@ class AIImplementation:
                     "AbsoluteAnxietyWorld",
                     "IncrementallyWorseWorld",
                     "TinyNextStep",
-                    "ClarifyingQuestion",
-                    "OutputText"
+                    "KnowledgeGap",
                 ]
                 for key in required_keys:
                     if key not in response_json:
@@ -148,32 +118,60 @@ class AIImplementation:
             print(e)
             return {}, [e]
 
-    def get_prediction(self, user_input:str, current_state: str, chat_history: str):
+    def get_prediction(self, user_input: str, current_state: str, chat_history: str):
         prompt = self.generate_prompt(current_state, user_input, chat_history)
-        # Call the Ollama model via command line
-        result = subprocess.run(
-            ["ollama", "run", self.model_name, prompt],
-            capture_output=True,
-            text=True,
-            check=True  # This will raise an error if the command fails
+        
+        # Use subprocess.Popen to allow streaming of output line-by-line
+        process = subprocess.Popen(
+            ["ollama", "run", self.model_name, prompt, "--format", "json"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
         )
 
+        response_lines = []
+        errors = []
+        
+        # Process the output in real-time as each line arrives
+        if process.stdout:
+            for line in iter(process.stdout.readline, ''):
+                response_lines.append(line)
+                
+                # Stream to debug mode in real-time
+                if debug:
+                    print("DEBUG (Streaming):", line.strip())
 
-        if result.returncode == 0:
-            response, errors = self.parse_response(result.stdout)
-            return response, result.stdout, errors
-        else:
-            print(f"Error with response: {result.returncode} - {result.stderr}")
-            return {}, result.stdout, [result.stderr]
+        
+        # Collect stderr output if any
+        error_output = process.stderr.read()
+        if error_output:
+            errors.append(error_output)
+        
+        # Wait for the process to complete
+        process.wait()
+
+        # Combine lines into the final response text
+        full_response_text = ''.join(response_lines)
+        
+        # Parse the response
+        response, parse_errors = self.parse_response(full_response_text)
+        
+        # Aggregate parsing errors and subprocess errors
+        if parse_errors:
+            errors.extend(parse_errors)
+        
+        return response, full_response_text, errors
+
+        
 
 # Main chat loop
 def main():
-    model_name = "llama3.1" # Ollama model name
+    model_name = "mistral" # Ollama model name
     ai = AIImplementation(model_name)
     
     chat_history = ""
     last_world_state = {}
-    debug = False
+    global debug
 
     def save_history(file_name: str):
         with open(file_name, 'w') as file:

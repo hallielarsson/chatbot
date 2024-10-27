@@ -2,30 +2,42 @@ import subprocess
 import json
 import re
 from typing import Dict, Any, Optional
-debug = True
+from chat_history_manager import ChatHistoryManager
+from command_processor import CommandProcessor
+
+debug = False
 # Define type for the expected world state structure
 class WorldState:
     def __init__(self, accuracy: float, new_value: str, additional_text: Optional[str] = None):
+
         self.accuracy = accuracy  # 0 to 1
         self.new_value = new_value  # String representation of the new state
         self.additional_text = additional_text  # Any extra information for the user
+
+    def __repr__(self):
+        return f"WorldState(accuracy={self.accuracy}, new_value='{self.new_value}', additional_text='{self.additional_text}')"
+
 
 # Define a class for the AI implementation
 class AIImplementation:
     def __init__(self, model_name: str):
         self.model_name = model_name
 
-    def generate_prompt(self, current_state, user_input:str, chat_history: str) -> str:
+
+    def generate_world_state_prompt(self, current_state,  chat_history: str) -> str:
+
 
         chat_messages = []
         for line in chat_history.strip().split('\n'):
-            role = "assistant" if line.startswith("Chatbot:") else "user"
+            role = "system"
+            if line.startswith('Chatbot'): role = "assistant"
+            if line.startswith('User'): role = "user"
             content = line.split(": ", 1)[-1]
             chat_messages.append({"role": role, "content": content})
         
 
         system = (
-            '''You are a predictive AI. Given the previous state (above) and the chat history (below) 
+            '''You are a predictive AI. Given the previous state and the chat history 
             return a JSON object that satisfies the format, replacing any text in <brackets>
             ```
             Please double check to make sure that the format you're outputting fulfills the type WorldStateResponse definiton and that you're actively fillingout each parameter within each world state details.
@@ -33,13 +45,14 @@ class AIImplementation:
             example response:
             ```json
             {
-              "CurrentState": {"accuracy": 0.8, "newValue": "<the current world state>" },
-              "AbsoluteIdealWorld": {"accuracy": 0.9, "newValue": "<fill in with what you think the better world would be>"},
-              "IncrementallyBetterWorld": {"accuracy": 0.7, "newValue": "<a world on the way from current to better.>"},
-              "AbsoluteAnxietyWorld": {"accuracy": 0.5, "newValue": "anxiety_state", "additionalText": "<the worst version of the current world>"},
+              "GeneralContextState": {"accuracy": 0.9, "newValue": "<the general world state -- a context of the chat we;re having, current events, changes slowly -- like an act in a play>" },
+              "CurrentState": {"accuracy": 0.9, "newValue": "<the current world state of the specific 'scene' we're in>" },
+              "AbsoluteIdealWorld": {"accuracy": 0.1, "newValue": "<fill in with what you think the better world would be>"},
+              "IncrementallyBetterWorld": {"accuracy": 0.4, "newValue": "<a world on the way from current to better.>"},
+              "AbsoluteAnxietyWorld": {"accuracy": 0.3, "newValue": "anxiety_state", "additionalText": "<the worst version of the current world>"},
               "IncrementallyWorseWorld": {"accuracy": 0.6, "newValue": "worse_state", "additionalText": "<a step from the current world towards the absolute anxious world>"},
               "TinyNextStep": "<fill in with a tiny next step towards the incrementally better world>",
-              "KnowledgeGap": "<an area you need more info on to confirm the accuracy of the world state>",
+              "KnowledgeGap": "<an area you could use more information on>",
             }
             ```
             Please do not output the entire chat history, only this data structure.
@@ -50,11 +63,10 @@ class AIImplementation:
         )
         return json.dumps({
             'messages': [
-                *chat_messages,
-                {"role": "system", "content":  current_state},                
+                *chat_messages[:-3],
+                {"role" : "system", "content": json.dumps(current_state)},
                 {"role": "system", "content": system},
-                {"role": "user", "content": user_input}
-
+                *chat_messages[-2:]
             ]
         })
 
@@ -83,6 +95,7 @@ class AIImplementation:
 
                 # Validate the structure
                 required_keys = [
+                    "GeneralContextState",
                     "CurrentState",
                     "AbsoluteIdealWorld",
                     "IncrementallyBetterWorld",
@@ -93,7 +106,6 @@ class AIImplementation:
                 ]
                 for key in required_keys:
                     if key not in response_json:
-                        print(response_json)
                         errors.append(f"Missing key in response: {key}")
 
                 if errors:
@@ -118,197 +130,132 @@ class AIImplementation:
             print(e)
             return {}, [e]
 
-    def get_prediction(self, user_input: str, current_state: str, chat_history: str):
-        prompt = self.generate_prompt(current_state, user_input, chat_history)
-        
-        # Use subprocess.Popen to allow streaming of output line-by-line
-        process = subprocess.Popen(
-            ["ollama", "run", self.model_name, prompt, "--format", "json"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
+
+    def generate_quick_response_prompt(self, current_state, user_input: str, chat_history: str) -> str:
+        """Generate a quick response without world state information."""
+        chat_messages = []
+        for line in chat_history.strip().split('\n'):
+            role = "assistant" if line.startswith("Chatbot:") else "user"
+            content = line.split(": ", 1)[-1]
+            chat_messages.append({"role": role, "content": content})
+            
+        return json.dumps({
+            'messages': [
+                {"role" : "system", "content": json.dumps(current_state)},
+                {"role" : "system", "content": (
+                    "You are a conversational AI. You have some, limited emotional "
+                "capacity and are curious, respectful, and fairly casual. "
+                "Your name is Lexi (she/her). "
+                f"You are curious to get this information: {current_state.get('KnowledgeGap', "Unspecified")}"
+                f"And interested in performing or urging the user to perform this step: {current_state.get('TinyNextStep', "Unspecified")}"
+                )},
+                *chat_messages,
+                {"role": "user", "content": user_input},
+            ]
+        })
+
+    def get_prediction(self, current_state: str, chat_history: str, user_input: str|None,  quick_response=False):
+        prompt = self.generate_quick_response_prompt(current_state, user_input, chat_history) if quick_response else self.generate_world_state_prompt(current_state, chat_history)
+
+        if quick_response:
+            process = subprocess.Popen(
+                ["ollama", "run", self.model_name, prompt],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding='utf-8'
+            )
+        else:
+            process = subprocess.Popen(
+                ["ollama", "run", self.model_name, prompt, "--format",  "json"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
 
         response_lines = []
-        errors = []
-        
-        # Process the output in real-time as each line arrives
-        if process.stdout:
-            for line in iter(process.stdout.readline, ''):
-                response_lines.append(line)
-                
-                # Stream to debug mode in real-time
-                if debug:
-                    print("DEBUG (Streaming):", line.strip())
 
-        
-        # Collect stderr output if any
+
+        print("generating ...")
+        for line in iter(process.stdout.readline, ''):
+            response_lines.append(line)
+            if quick_response: print(line.strip())
+            if debug:
+                print("DEBUG (Streaming):", line.strip())
+
         error_output = process.stderr.read()
-        if error_output:
-            errors.append(error_output)
-        
-        # Wait for the process to complete
+        errors = [error_output] if error_output else []
+
         process.wait()
 
-        # Combine lines into the final response text
+
+
         full_response_text = ''.join(response_lines)
-        
-        # Parse the response
+        if quick_response:
+            return None, full_response_text, errors
+
         response, parse_errors = self.parse_response(full_response_text)
         
-        # Aggregate parsing errors and subprocess errors
         if parse_errors:
             errors.extend(parse_errors)
-        
+            
         return response, full_response_text, errors
 
-        
 
-# Main chat loop
+
 def main():
-    model_name = "mistral" # Ollama model name
+    model_name = "gemma2"
     ai = AIImplementation(model_name)
-    
-    chat_history = ""
-    last_world_state = {}
-    global debug
+    chat_manager = ChatHistoryManager()
+    command_processor = CommandProcessor(chat_manager, ai)
 
-    def save_history(file_name: str):
-        with open(file_name, 'w') as file:
-            file.write(chat_history)
-        print(f"Chat history saved to {file_name}.")
+    chat_manager.load_history()
+    chat_manager.load_last_world_state()
 
- 
-    def save_last_world_state(file_name: str):
-        with open(file_name, 'w') as file:
-            json.dump(last_world_state, file)
-        print(f"Last world state saved to {file_name}.")
-
-    def load_history(file_name: str):
-        """Load chat history from a file, setting chat_history to an empty string if the file is not found."""
-        nonlocal chat_history
-        try:
-            with open(file_name, 'r') as file:
-                chat_history = file.read()
-            print(f"Chat history loaded from {file_name}.")
-        except FileNotFoundError:
-            chat_history = ""
-            print(f"{file_name} not found. Starting with an empty chat history.")
-
-    def load_last_world_state(file_name: str):
-        """Load last world state from a file, setting last_world_state to an empty dictionary if the file is not found."""
-        nonlocal last_world_state
-        try:
-            with open(file_name, 'r') as file:
-                last_world_state = json.load(file)
-            print(f"Last world state loaded from {file_name}.")
-        except FileNotFoundError:
-            last_world_state = {}
-            print(f"{file_name} not found. Starting with an empty world state.")
-        except json.JSONDecodeError:
-            last_world_state = {}
-            print(f"Error reading {file_name}. The file is not valid JSON. Starting with an empty world state.")
-   
-    def run_console_command(command: str) -> str:
-        """Run a console command and return its output."""
-        try:
-            result = subprocess.run(command, shell=True, capture_output=True, text=True)
-            if result.returncode == 0:
-                return result.stdout.strip()
-            else:
-                print(f"Error running command: {result.stderr.strip()}")
-                return ""
-        except Exception as e:
-            print(f"Failed to run command: {e}")
-            return ""
-
-    load_history('chat_history.txt')
-
-    previous_response = ''
     while True:
-        user_input = input("You: ") 
+        user_input = input("You: ").strip()
+        if user_input.startswith("/"):
+            result, pass_on = command_processor.execute_command(user_input.strip())
+            if result == "exit":
+                break
 
-        output_file = None
-    
-        if '>' in user_input:
-            # extract the file path from the user input
-            output_file = user_input.split('>')[1].strip()
-
-        if user_input.lower() == "/exit":
-            break
-        elif user_input.lower() == "/debug":
-            debug = not debug
-            continue
-        elif user_input.lower() == "/save":
-            save_history("chat_history.txt")
-            save_last_world_state("last_world_state.json")
-            continue
-        elif user_input.lower() == "/load":
-            load_history("chat_history.txt")
-            load_last_world_state("last_world_state.json")
-            continue
-        elif user_input.lower() == "/states":
-            # Display states with evaluations (example placeholder)
-            print(json.dumps(last_world_state))
-            continue
-        elif user_input.lower().startswith("/console "):
-            command = user_input[9:]  # Remove "/console " from the input
-            feedback = command.endswith("|")
-            if feedback:
-                command = command[:-1].strip()  # Remove the trailing pipe
-            output = run_console_command(command)
-            print(output)
-            if feedback:
-                next_input = output
-                print(f"Next input from command output: {next_input}")
-                user_input = next_input  # Use the output as the next input
             else:
+                user_input = user_input + "->" + result
+            if not pass_on:
+                print(result)
                 continue
-        elif user_input.lower()[0] == "/":
-            print("unrecognized command")
-            continue
-        
-        # Append the user input to chat history
-        chat_history += f"You: {user_input}\n"
-        
-        # Call AI to get predictions
+        # Append input to chat history
+        chat_manager.chat_history += f"You: {user_input}\n"
+
+
+        # Immediate Response
+        _, quick_response, errors = ai.get_prediction(
+            user_input=user_input,
+            current_state=chat_manager.last_world_state,
+            chat_history=chat_manager.chat_history,
+            quick_response=True,
+        )
+        chat_manager.chat_history += f"User: {user_input}\n"
+        chat_manager.chat_history += f"Chatbot: {quick_response}\n"
+
+        # AI Prediction Processing
         prediction, raw_response, errors = ai.get_prediction(
             user_input=user_input,
-            current_state=last_world_state,
-            chat_history=chat_history)
-
-        # Process the prediction result
+            current_state=chat_manager.last_world_state,
+            chat_history=chat_manager.chat_history
+        )
+        
         if prediction:
-            for state, details in prediction.items():
-                if isinstance(details, dict):
-                    last_world_state[state] = details  # Update the last world state
-                    if debug: print(f"{state}: Accuracy: {details.get('accuracy', 'N/A')}, New Value: {details.get('newValue', 'N/A')}, Additional Info: {details.get('additionalText', '')}")
-                else:
-                    if debug: print(f"{state}: {details} (Type: {type(details)})")
-            save_last_world_state('last_world_state.json')
-            save_history('chat_history.txt')
-
-
-            # Output Tiny Next Step and Clarifying Question
-            print("Tiny Next Step:", prediction.get("TinyNextStep"))
-            print("Clarifying Question:", prediction.get("ClarifyingQuestion"))
-            print(prediction.get("OutputText") + '\n' + prediction.get("tail_text", ""))
-            
-            output_file_params = prediction.get('OutputFile')
-            if output_file_params:
-                if input(f"Chatbot provided a file. Do you want to save it to {output_file_params['path']}?") == 'y':
-                    with open(output_file_params['path'], 'w') as f:
-                        f.write(output_file_params['content'])
-
-            chat_history += f"Chatbot: {raw_response}\n"
+            chat_manager.last_world_state.update(prediction)
+            # print("Tiny Next Step:", prediction.get("TinyNextStep"))
+            # print("KnowledgeGap:", prediction.get("KnowledgeGap"))
+            # print(prediction.get("OutputText", "") + "\n" + prediction.get("tail_text", ""))
+            chat_manager.chat_history += f"System: {json.dumps(prediction)}\n"
         else:
-            chat_history += f"Chatbot: [ERROR PROCESSING RESPONSE] {errors}\n - {raw_response}\n"
-        save_history('chat_history.txt')
+            chat_manager.chat_history += f"Chatbot: [ERROR PROCESSING RESPONSE] {errors}\n"
+        
+        chat_manager.save_history()
 
-        if output_file:
-            # save the response to the file
-            with open(output_file, 'w') as f:
-                f.write(raw_response)
 
 
 if __name__ == "__main__":

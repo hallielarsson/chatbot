@@ -5,3 +5,5 @@ chatbot-env
 sandbox/**
 last_world_state.json
 user_feedback.txt
+logs/**
+__pycache__/**

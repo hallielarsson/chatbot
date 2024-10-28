@@ -7,3 +7,8 @@ last_world_state.json
 user_feedback.txt
 logs/**
 __pycache__/**
+.env/**
+**/__pycache__/**
+*.jsonl
+states/*
+@test*

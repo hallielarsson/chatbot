@@ -1,5 +1,7 @@
 import subprocess
 import json
+import pandas as pd    
+
 
 class CommandProcessor:
     def __init__(self, chat_history_manager, ai):
@@ -26,13 +28,17 @@ class CommandProcessor:
             self.chat_history_manager.save_history()
             self.chat_history_manager.save_last_world_state()
         elif command == "/archive":
-            self.chat_history_manager.archive_()
+            self.chat_history_manager.archive_history()
             self.chat_history_manager.save_last_world_state()
         elif command == "/load":
             self.chat_history_manager.load_history()
             self.chat_history_manager.load_last_world_state()
         elif command == "/states":
             return json.dumps(self.chat_history_manager.last_world_state, indent=2), False
+        elif command == '/+':
+            self.chat_history_manager.rate_chat(1)
+        elif command == '/-':
+            self.chat_history_manager.rate_chat(-1)
         elif command.startswith('/c '):
             command = command[3:]
             output, pass_on = self.process_console_command(command)

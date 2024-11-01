@@ -1,5 +1,5 @@
-chat_history.bak.txt
-chat_history.txt
+logs/chat_history.bak.txt
+logs/chat_history.txt
 chatbot-env/**
 chatbot-env
 sandbox/**
@@ -12,3 +12,6 @@ __pycache__/**
 *.jsonl
 states/*
 @test*
+/chat_vectors.index
+/.idea/chatbot.iml
+.idea/**

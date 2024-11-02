@@ -3,6 +3,8 @@ import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
 
+from chat_history.history_log import HistoryLog
+
 
 class VectorStorageBase:
     def __init__(self, vector_model=None, vector_file='vectors.index'):
@@ -27,19 +29,16 @@ class VectorStorageBase:
         else:
             self.vector_index = faiss.IndexFlatL2(768)  # Initialize a new FAISS index if the file does not exist
 
-    def retrieve_text(self, vector, k=1):
+    def retrieve_vectors(self, vector, k=1):
         """Retrieve the top k nearest text entries corresponding to a given vector."""
-        # Convert vector to a float32 array and reshape for the search
-        if isinstance(vector, str): vector  = self.vector_model.encode(vector)
-        vector = np.array(vector).astype('float32').reshape(1, -1)  # shape (1, d)
+        # Ensure the vector is encoded and reshaped to match FAISS's expectations
+        if isinstance(vector, str):
+            vector = self.vector_model.encode(vector)
+        vector = np.array(vector).astype('float32').reshape(1, -1)  # (1, 768) for DistilBERT embeddings
 
-        # Create arrays for distances and labels
-        distances = np.full((1, k), -1, dtype='float32')  # Initialize with -1
-        indices = np.full((1, k), -1, dtype='int64')  # Initialize with -1
+        # Run the search on the FAISS index directly and retrieve distances and indices
+        distances, indices = self.vector_index.search(vector, k)
 
-        # Perform the search
-        self.vector_index.search(n=1, x=vector, k=k, distances=distances, labels=indices)
+        return indices[0].tolist(), distances[0].tolist()
 
-        # Retrieve the original text entries corresponding to the indices
-        return indices[0], distances[0]
 

@@ -6,3 +6,6 @@ class OutputHandler(ABC):
     async def send_output(self, message: str, message_type: str=None):
         """Send output to the user."""
         pass
+
+    def queue_output(self, message: str, message_type: str=None):
+        pass

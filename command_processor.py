@@ -54,7 +54,7 @@ class CommandProcessor:
 
     async def handle_save(self, command):
         """Handle the save command."""
-        self.chat_history_manager.save_history()
+        self.chat_history_manager.save_logs()
         self.chat_history_manager.save_last_world_state()
         return "History saved.", False
 

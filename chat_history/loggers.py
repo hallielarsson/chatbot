@@ -42,7 +42,7 @@ class BaseLogger(ABC):
         pass
 
     @abstractmethod
-    async def save_history(self):
+    async def save_logs(self):
         """Save the current chat history to the database and/or file."""
         pass
 
@@ -51,7 +51,7 @@ class BaseLogger(ABC):
         if not self.save_lock.locked():
             async with self.save_lock:
                 while not self.save_queue.empty():
-                    await self.save_history()  # Save the chat history
+                    await self.save_logs()  # Save the chat history
                     self.save_queue.task_done()
 
 

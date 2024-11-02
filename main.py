@@ -14,5 +14,6 @@ if __name__ == "__main__":
     debug_logger = DebugLogger(output_handler)
     chatbot = Chatbot(input_handler, output_handler, model_name="gemma2", debug_logger=debug_logger)
 
+
     # Start the chatbot
     asyncio.run(chatbot.run())

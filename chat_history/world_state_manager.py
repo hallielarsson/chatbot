@@ -15,6 +15,7 @@ class WorldStateManager:
         self.save_lock = asyncio.Lock()
         self.save_queue = asyncio.Queue()
 
+
     async def save_last_world_state(self):
         """Save the last world state to a JSON file, database, and history file."""
         if not self.save_lock.locked():
@@ -40,5 +41,6 @@ class WorldStateManager:
 
     async def update_world_state(self, new_state):
         """Update the last world state with new values and save."""
+        self.last_world_state["errors"] = []
         self.last_world_state.update(new_state)  # Merge new state into the last state
         await self.save_last_world_state()  # Save the updated state

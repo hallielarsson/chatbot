@@ -54,7 +54,7 @@ class WorldStateLogger(BaseLogger):
                 message_type="system"
             )
 
-    async def save_history(self):
+    async def save_logs(self):
         """Save the current world state history to the file."""
         if self.chat_history:
             try:

@@ -40,7 +40,6 @@ class Chatbot:
         state_manager = history_manager.world_state_manager
         self.generation_task = asyncio.create_task(
             self.ai.get_prediction_streaming(
-                current_state=state_manager.last_world_state,
                 user_input=user_input,
                 is_cancelled=lambda: False)
         )
@@ -51,7 +50,8 @@ class Chatbot:
                 await state_manager.update_world_state(prediction)
                 # await history_manager.log_chat(role='system', content=prediction)
             else:
-                await history_manager.log_chat(role='system', content=f"[ERROR PROCESSING RESPONSE] {errors}")
+                await state_manager.update_world_state({ 'errors': [errors]})
+                # await history_manager.log_chat(role='system', content=f"[ERROR PROCESSING RESPONSE] {errors}")
 
         except asyncio.CancelledError:
             if self.generation_task:
@@ -113,6 +113,7 @@ class Chatbot:
 
     async def run(self):
         """Main method to run the chatbot."""
+        await self.chat_manager.init()
         await self.output_handler.send_output("Chatbot is starting...")
         await self.load()
         await self.handle_input()

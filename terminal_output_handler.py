@@ -9,6 +9,13 @@ class TerminalOutputHandler(OutputHandler):
         "chatbot": "\033[92m",  # Green for chatbot responses
         "reset": "\033[0m"      # Reset to default color
     }
+    # Theoretically this should queue the output for rendering at the next time
+    # but we can just print here as this is more for sync processes allowing them to interact with async
+    # and we dont care here.
+    def queue_output(self, message: str, message_type: str='reset'):
+        color = self.COLORS.get(message_type, self.COLORS["reset"])
+        formatted_message = f"{color}{message}{self.COLORS['reset']}"
+        print(formatted_message)
 
     async def send_output(self, message: str, message_type: str = "reset"):
         """Send output to the terminal asynchronously with color coding."""

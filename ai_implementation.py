@@ -9,7 +9,7 @@ from output_handler import OutputHandler
 from chat_history.chat_history_manager import ChatHistoryManager
 # Assuming OutputHandler and InputHandler exist in your codebase
 
-MAX_HISTORY_LENGTH = 5  # Example constant for history length
+MAX_HISTORY_LENGTH = 7  # Example constant for history length
 
 
 def clean_response(response_text: str) -> str:
@@ -73,7 +73,7 @@ class AIImplementation:
                 'AbsoluteAnxietyWorld',
                 'IncrementallyWorseWorld',
                 'TinyNextStepOptions',
-                'KnowledgeGap'
+                'EvidenceNeeded'
             ]:
                 lines.append(json.dumps(out) + "\n")
 
@@ -87,14 +87,14 @@ class AIImplementation:
 
             example response:
             ```jsonl
-             {"GeneralContextState": {"newValue": "<the general world state -- a context of the chat we're having, current events, changes slowly -- like an act in a play>"}}
-             {"CurrentState": { "newValue": "<the current world state of the specific 'scene' we're in>" }}
-             {"AbsoluteIdealWorld": { "newValue": "<fill in with what you think the better world would be>"}}
-             {"IncrementallyBetterWorld": { "newValue": "<a world on the way from current to better.>"}}
-             {"AbsoluteAnxietyWorld": { "newValue": "<the worst version of the current world>"}}
-             {"IncrementallyWorseWorld": { "newValue": "<a step from the current world towards the absolute anxious world>"}}
-             {"TinyNextStepOptions": ["<fill in with a tiny next step towards the incrementally better world> and/or away from the worse one","<fill in with a divergent tinly towards the incrementally better world and/or away from the worse one>"]}
-             {"KnowledgeGap": "<an area you want use more information on>"}
+             {"GeneralContextState": {"newValue": "<A hypothesis about what's going on generally over the course of the entire conversation with evidence>"}}
+             {"CurrentState": { "newValue": "<A hypothesis about what's going on specifically in the current topic with evidence >" }}
+             {"AbsoluteIdealWorld": { "newValue": "<A hypothesis about the best possible version of the world would look like>"}}
+             {"IncrementallyBetterWorld": { "newValue": "<A hypothesis about what the world in the next few interactions would look like if we're moving towards the ideal world>"}}
+             {"AbsoluteAnxietyWorld": { "newValue": "<A hypothesis about what the worst possible version of the world would look like>"}}
+             {"IncrementallyWorseWorld": { "newValue": "<A hypothesis about what the world in the next few interactions will look like if we're moving towards the worse version of the world with evidence>"}}
+             {"TinyNextStepOptions": ["<fill in with a tiny next step towards the incrementally better world and/or away from the worse one>",...]}
+             {"EvidenceNeeded": ["<Areas you need evidence on to validate or complicate the above hypotheses>",...]}
             ```
             
             the previous state, converted to this format is:'''
@@ -119,7 +119,9 @@ class AIImplementation:
             "You have a strong drive to respect people and to understand things and your effect on the world. "
             "You have a drive to keep conversation interesting, flowing, and fun. "
             "You have a stronger desire to respect people's boundaries, including your own. "
+            "You have a drive towards pragmatism and forward momentum, prototyping and iterating to move forward. "
             "The system message about current context is your own evaluation. "
+            "Please preface your message with a facial emoji and others representing your current mood"
             f"Recently, you were curious about this: '{current_state.get('KnowledgeGap', 'Unspecified')}'. "
         )
         
@@ -130,19 +132,19 @@ class AIImplementation:
 
         return system_content
 
-    async def generate_world_state_prompt(self, current_state) -> str:
+    async def generate_world_state_prompt(self, user_input) -> str:
         """
         Generate a prompt for world state prediction based on current state and chat history.
-
-        :param current_state: The current state of the conversation.
         :return: JSON string containing the prompt for world state generation.
         """
         chat_messages = await self.get_recent_chat_messages()
         system = self.build_world_state_system_message()
         return json.dumps({
+            'description' : "this is your current chat log",
             'messages': [
-                *chat_messages,
                 {"role": "system", "content": system},
+                *chat_messages,
+                {"role": "user", "content": user_input}
             ]
         })
 
@@ -162,11 +164,14 @@ class AIImplementation:
         :return: JSON string containing the prompt for a quick response.
         """
         chat_messages = await self.get_recent_chat_messages()
+        context_messages = await self.chat_history_manager.context_history(user_input)
+        print(context_messages)
         system_content = await self.build_quick_response_system_message()
         return json.dumps({
             'messages': [
                 {"role": "system", "content": system_content},
                 *chat_messages,
+                {"role": "system", "content": f"Context relevant messages: {json.dumps(context_messages)}"},
                 {"role": "user", "content": user_input},
             ]
         })
@@ -182,16 +187,14 @@ class AIImplementation:
         prompt = await self.generate_quick_response_prompt(user_input)
         return await self.run_model_process(prompt)
 
-    async def get_prediction_streaming(self, current_state: str, user_input: str, is_cancelled):
+    async def get_prediction_streaming(self, user_input, is_cancelled):
         """
         Stream prediction data from the AI model.
 
-        :param current_state: The current state of the conversation.
-        :param user_input: Input from the user.
         :param is_cancelled: Cancellation check function.
         :return: Response data from the model, cancellation message, and any errors.
         """
-        prompt = await self.generate_world_state_prompt(current_state)
+        prompt = await self.generate_world_state_prompt(user_input)
         return await self.run_model_process(prompt, is_cancelled, is_jsonl=True)
 
     async def run_model_process(self, prompt: str, is_cancelled=None, is_jsonl=False):
@@ -204,7 +207,9 @@ class AIImplementation:
         :return: A tuple containing response data, cancellation message, and errors.
         """
 
-        args = ['--format', 'json'] if is_jsonl else []
+        context_window_size = 8192
+        args = ["context-window", str(context_window_size)]
+        if is_jsonl: args.extend(['--format', 'json'])
         process = await asyncio.create_subprocess_exec(
             "ollama", "run", self.model_name, prompt, *args,
             stdout=subprocess.PIPE,
@@ -222,7 +227,8 @@ class AIImplementation:
                 if not line:
                     break
                 processed_line, line_errors = process_line_bytes(line, handle_json=is_jsonl)
-                
+                if not is_jsonl:
+                    self.output_handler.queue_output(message=processed_line)
                 if line_errors:
                     errors.extend(line_errors)
                 elif is_jsonl:

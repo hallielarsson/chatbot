@@ -1,12 +1,12 @@
 import faiss
 import numpy as np
 
-from chat_history.chat_logger import ChatLogger
+from chat_history.history_log import HistoryLog
 from chat_history.vector_storage import VectorStorageBase
 
 
 class VectorChatStorage(VectorStorageBase):
-    def __init__(self, chat_logger: ChatLogger, vector_file='chat_vectors.index'):
+    def __init__(self, chat_logger: HistoryLog, vector_file='chat_vectors.index'):
         super().__init__(vector_file=vector_file)
         self.chat_logger = chat_logger  # Reference to the ChatLogger for interaction
 
@@ -15,16 +15,15 @@ class VectorChatStorage(VectorStorageBase):
         # Aggregate the content of the chat entry for vectorization
         vector = self.vector_model.encode(entry["content"])
         self.vector_index.add(np.array([vector]).astype('float32'))
-
-        # Store the index of the vector in the chat entry YTODO MAKE THIS SAFER
-        entry['chat_vector_index'] = self.vector_index.ntotal - 1
+        index = self.vector_index.ntotal
         faiss.write_index(self.vector_index, self.vector_file)  # Save index to file
+        return self.vector_index.ntotal
 
     async def init_vector_db(self):
         """Initialize vector storage by processing existing chat entries."""
         new_entries_count = 0
 
-        for entry in self.chat_logger.chat_history:
+        for entry in self.chat_logger.history:
             if 'vectorized' not in entry:  # Only process unvectorized entries
                 await self.save_chat_vector(entry)  # Save the vector representation for the entry
                 new_entries_count += 1
@@ -34,7 +33,7 @@ class VectorChatStorage(VectorStorageBase):
 
     async def retrieve_chat_vector(self, entry_id: str):
         """Retrieve the vector associated with a specific chat entry ID."""
-        entry = next((e for e in self.chat_logger.chat_history if e['id'] == entry_id), None)
+        entry = next((e for e in self.chat_logger.history if e['id'] == entry_id), None)
         if entry:
             chat_vector_index = entry.get('chat_vector_index')
             if chat_vector_index is not None:
